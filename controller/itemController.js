@@ -5,6 +5,7 @@ import ItemReport from '../models/ItemReport.js';
 import cloudinary from '../config/cloudinary.js';
 import { parsePagination, buildPaginationMeta } from '../utils/pagination.js';
 import { toSentenceCase } from '../utils/string.js';
+import { v4 as uuidv4 } from 'uuid';
 
 // ─── Helper: hapus gambar dari Cloudinary ───────────────────────────────────
 const deleteFromCloudinary = async (publicId) => {
@@ -206,7 +207,7 @@ export const updateItem = async (req, res) => {
 };
 
 // POST /api/items/import — import massal CSV/XLSX (hanya admin)
-// Body: { items: [{ nama_barang, qr_code, kategori, status? }] }
+// Body: { items: [{ nama_barang, qr_code, kategori, status?, gambar_url? }] }
 export const importItems = async (req, res) => {
     try {
         const { items } = req.body;
@@ -219,7 +220,7 @@ export const importItems = async (req, res) => {
         }
 
         const VALID_STATUSES = ['tersedia', 'dipinjam', 'rusak', 'hilang'];
-        const results = { inserted: 0, skipped: [], errors: [] };
+        const results = { inserted: 0, skipped: [], errors: [], warnings: [] };
 
         // Validasi tiap row
         const validRows = [];
@@ -231,6 +232,7 @@ export const importItems = async (req, res) => {
             const qr_code     = row.qr_code?.toString().trim();
             const kategori    = toSentenceCase(row.kategori?.toString());
             const status      = row.status?.toString().trim().toLowerCase() || 'tersedia';
+            const rawGambar   = (row.gambar_url || row.link_gambar || row.url_gambar || row.gambar || row.foto || row.image || row.image_url || '')?.toString().trim();
 
             if (!nama_barang) { results.errors.push({ row: rowNum, qr_code: qr_code || '-', message: 'nama_barang wajib diisi.' }); continue; }
             if (!qr_code)     { results.errors.push({ row: rowNum, qr_code: '-', message: 'qr_code / SKU wajib diisi.' }); continue; }
@@ -240,7 +242,16 @@ export const importItems = async (req, res) => {
                 continue;
             }
 
-            validRows.push({ nama_barang, qr_code, kategori, status });
+            validRows.push({
+                rowNum,
+                nama_barang,
+                qr_code,
+                kategori,
+                status,
+                rawGambarUrl: rawGambar || null,
+                gambar_url: null,
+                cloudinary_public_id: null,
+            });
         }
 
         if (validRows.length === 0) {
@@ -283,9 +294,47 @@ export const importItems = async (req, res) => {
             });
         }
 
-        // Bulk INSERT — gambar_url & cloudinary_public_id dikosongkan
+        // Upload gambar ke Cloudinary untuk baris yang memiliki image URL publik
+        const itemsWithImages = toInsert.filter(r => r.rawGambarUrl && /^https?:\/\//i.test(r.rawGambarUrl));
+        const CHUNK_SIZE = 5;
+        for (let i = 0; i < itemsWithImages.length; i += CHUNK_SIZE) {
+            const chunk = itemsWithImages.slice(i, i + CHUNK_SIZE);
+            await Promise.all(chunk.map(async (item) => {
+                try {
+                    const uploadResult = await cloudinary.uploader.upload(item.rawGambarUrl, {
+                        folder: 'qrfast/items',
+                        public_id: uuidv4(),
+                        resource_type: 'image',
+                        format: 'webp',
+                        transformation: [
+                            { width: 800, crop: 'limit' },
+                            { quality: 80 }
+                        ],
+                        overwrite: false,
+                    });
+                    item.gambar_url = uploadResult.secure_url;
+                    item.cloudinary_public_id = uploadResult.public_id;
+                } catch (imgErr) {
+                    console.error(`Gagal upload gambar Cloudinary untuk SKU ${item.qr_code} (${item.rawGambarUrl}):`, imgErr.message);
+                    results.warnings.push({
+                        row: item.rowNum,
+                        qr_code: item.qr_code,
+                        message: `Gagal upload gambar dari URL (${item.rawGambarUrl}): ${imgErr.message}`
+                    });
+                }
+            }));
+        }
+
+        // Bulk INSERT ke database
         const insertPlaceholders = toInsert.map(() => '(?, ?, ?, ?, ?, ?)').join(', ');
-        const insertValues       = toInsert.flatMap(r => [r.nama_barang, r.qr_code, r.kategori, null, null, r.status]);
+        const insertValues       = toInsert.flatMap(r => [
+            r.nama_barang,
+            r.qr_code,
+            r.kategori,
+            r.gambar_url,
+            r.cloudinary_public_id,
+            r.status
+        ]);
 
         const [insertResult] = await db.query(
             `INSERT INTO items (nama_barang, qr_code, kategori, gambar_url, cloudinary_public_id, status) VALUES ${insertPlaceholders}`,
