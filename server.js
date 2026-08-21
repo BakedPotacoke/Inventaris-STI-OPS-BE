@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { initializeDatabase } from './src/config/database.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -49,17 +48,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: err.message || 'Terjadi kesalahan pada server.' });
 });
 
-const startServer = async () => {
-  try {
-    await initializeDatabase();
-  } catch (error) {
-    console.error('❌ Gagal menginisialisasi database:', error);
-    process.exit(1);
-  }
-
-  app.listen(PORT, () => {
-    console.log(`Server berjalan http://localhost:${PORT}`);
-  });
-};
-
-startServer();
+app.listen(PORT, () => {
+  console.log(`Server berjalan http://localhost:${PORT}`);
+});
