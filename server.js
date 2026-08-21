@@ -23,6 +23,7 @@ import transactionRouter from './routes/transactionRoutes.js';
 import dashboardAdminRoutes from './routes/dashboardAdminRoutes.js';
 import dashboardUserRoutes from './routes/dashboardRoutes.js';
 import itemReportRoutes from './routes/itemReportRoutes.js';
+import resetRoutes from './routes/resetRoutes.js';
 
 // Daftarkan URL Endpoint
 app.use('/api/dashboard', dashboardAdminRoutes); // GET /api/dashboard/summary (admin only)
@@ -34,6 +35,7 @@ app.use('/api/items', itemRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/transactions', transactionRouter);
 app.use('/api/reports', itemReportRoutes);
+app.use('/api/reset', resetRoutes); // POST /api/reset/database (admin only, dev/testing)
 
 // Rute Uji Coba Dasar
 app.get('/', (req, res) => {
